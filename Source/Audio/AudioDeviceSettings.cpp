@@ -1,9 +1,28 @@
 /*
  * AudioDeviceSettings.cpp
- * VoicemeeterHost — UI Scale Manager & Device Selector Dialog/Window
+ * VoicemeeterHost — UI 縮放管理器與裝置選擇對話方塊 / 視窗實作
  *
- * Uses LookAndFeel_V4 (replaces deprecated V3).
- * Uses modern Font(FontOptions{}) constructors.
+ * 本檔包含五大部分：
+ *
+ * 1. ScaleSettingsManager
+ *    管理 UI 縮放倍數的單例，轉接刽存/讀入設定檔。
+ *
+ * 2. 輔助函式
+ *    getSystemFrameHeight()：取得 Windows 標題列自然高度使用於視窗尺度計算。
+ *
+ * 3. ScaledSelectorLookAndFeel
+ *    自訂 LookAndFeel_V4 子類，為裝置選擇元件提供淺色主題、
+ *    字型尺度自動調整、對話方塊、切換掉等元件癌染。
+ *
+ * 4. DeviceSelectorDialog
+ *    把 JUCE AudioDeviceSelectorComponent 包裝為可即時縮放的對話方塊。
+ *
+ * 5. DeviceSelectorWindow
+ *    封裝 DeviceSelectorDialog，從外部自動調整視窗尺度。
+ *
+ * 依賴資訊：
+ *   使用 LookAndFeel_V4（已棄用 V3）。
+ *   使用新式 Font(FontOptions{}) 構造元。
  */
 
 #include "AudioDeviceSettings.h"
@@ -15,23 +34,28 @@
 #endif
 
 // ═══════════════════════════════════════════════════════════════
-// ScaleSettingsManager
+// ScaleSettingsManager 實作
+// 單例模式：透過靜態局部變數的歸返位址來實現進程内安全的單例。
 // ═══════════════════════════════════════════════════════════════
 
 ScaleSettingsManager &ScaleSettingsManager::getInstance()
 {
-    static ScaleSettingsManager instance;
+    static ScaleSettingsManager instance; // 隱於函式內的靜態變數，第一次呼叫時廻建
     return instance;
 }
 
+// 取得目前縮放倍數（疒屬字段加以屬性回傳）
 float ScaleSettingsManager::getScaleFactor() const { return scaleFactor; }
 
+// 設定新縮放倍數同時立即寫入使用者設定檔
 void ScaleSettingsManager::setScaleFactor(float scale)
 {
     scaleFactor = scale;
     saveSettings();
 }
 
+// 從使用者設定檔讀入 "uiScaleFactor" 欄位的縮放倍數。
+// 若讀入失敗或超出合法範圍 [0.5, 3.0]，則保持預設導 1.0f。
 void ScaleSettingsManager::loadSettings()
 {
     try
@@ -45,6 +69,7 @@ void ScaleSettingsManager::loadSettings()
     }
 }
 
+// 將目前縮放倍數寫入使用者設定檔並觸發不同步存檔。
 void ScaleSettingsManager::saveSettings()
 {
     try
@@ -57,9 +82,13 @@ void ScaleSettingsManager::saveSettings()
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────
-// getDPIScaleFactor / getFontScaleFactor are defined inline in NodeComponent.h
+// ─── 輔助函式 ───────────────────────────────────────────
+// getDPIScaleFactor / getFontScaleFactor 在 NodeComponent.h 中以 inline 定義，
+// 本檔不重複定義以免連結衝突（One Definition Rule）。
 
+// 取得 Windows 標題列自然高度（標題嵌入元件高 + 標題列高）。
+// 用於 DeviceSelectorWindow 計算內容外的額外高度預留量。
+// 在非 Windows 平台返回固定估算値 40px。
 static int getSystemFrameHeight()
 {
 #if JUCE_WINDOWS
@@ -69,8 +98,14 @@ static int getSystemFrameHeight()
 #endif
 }
 
-// ─── Scaled LookAndFeel (V4) ────────────────────────────────
-
+// ─── 縮放自訂外觀樣式（V4） ─────────────────────────────────
+// ScaledSelectorLookAndFeel 是專用於 裝置選擇對話方塊 的 LookAndFeel 子類。
+// 主要衘覆以下繪製方法：
+//   - getComboBoxFont / getPopupMenuFont / getTextButtonFont：統一字型尺度
+//   - drawPropertyComponentLabel：讓屬性標籤字型與切換毄一致
+//   - drawLinearSlider：寬軌道、圓形手柄美化樣式
+//   - drawLevelMeter：分段式動態電平暟癌染
+//   - drawToggleButton / drawTickBox：切換成方形勾選框樣式
 class ScaledSelectorLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -339,31 +374,43 @@ static ScaledSelectorLookAndFeel &getScaledSelectorLookAndFeel()
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DeviceSelectorDialog
+// DeviceSelectorDialog 實作
+// 此處為對話方塊的廻建、銷毀、更新逻輯。
 // ═══════════════════════════════════════════════════════════════
 
+// 建構對話方塊：記錄裝置管理器參照及通道數，並以內嵌的選擇元件啟動 150ms 偵測計時器。
 DeviceSelectorDialog::DeviceSelectorDialog(juce::AudioDeviceManager &dm, int maxIn, int maxOut)
     : mgr(dm), initialMaxIn(maxIn), initialMaxOut(maxOut)
 {
-    updateSelectorComponent();
-    startTimer(150);
+    updateSelectorComponent(); // 立即建立內嵌選擇元件
+    startTimer(150);           // 啟動尺度變化偵測計會
 }
 
+// 銷毀對話方塊：停止計時器並解除內嵌元件的外觀樣式綁定。
+// 必須在銷毀前訓空 LookAndFeel 引用，和避悉悉指向已太空物件的憸提。
 DeviceSelectorDialog::~DeviceSelectorDialog()
 {
-    stopTimer();
+    stopTimer();        // 停止尺度偵測計時器
     if (sel)
-        sel->setLookAndFeel(nullptr);
+        sel->setLookAndFeel(nullptr); // 解除外觀樣式綁定，游免憸提失效
 }
 
+// 計時器回調：每 150ms 檢測字型尺度是否變化。
+// 差異小於 0.005 表示尺度無變化，直接返回以減少不必要的重建。
 void DeviceSelectorDialog::timerCallback()
 {
     float cur = getFontScaleFactor();
     if (std::abs(cur - lastScale) < 0.005f)
-        return;
-    updateSelectorComponent();
+        return; // 尺度未變，跳過重建
+    updateSelectorComponent(); // 尺度變化，重建元件
 }
 
+// 重建內嵌的 AudioDeviceSelectorComponent。
+// 而步驟：
+//   1. 防止舊元件對外觀樣式的參照
+//   2. 廻建全新元件並設定自訂外觀
+//   3. 用 callAsync 延遲對內容高度的測量（需要 resized() 完成後）
+//   4. 乱數計算自然高度并觸發 onScaleChanged
 void DeviceSelectorDialog::updateSelectorComponent()
 {
     if (sel)

@@ -1,11 +1,12 @@
 /*
  * GraphComponent.cpp
- * VoicemeeterHost — Node Graph Canvas (paint, zoom, pan, mouse events)
+ * VoicemeeterHost — 節點圖畫布（繪製、縮放、平移、滑鼠事件）
  *
- * Rewritten from LightHost NodeGraphCanvas with:
- *   - Split drawing into NodeComponent / ConnectionComponent
- *   - Replaced deprecated APIs
- *   - Uses modern Font(FontOptions{}) constructors
+ * 主要負責：
+ *   - 區域背景與標題繪製（Left Zone 、Center Zone 、Right Zone）
+ *   - 連線（Bezier 曲線）與連線拖曳的視覺化
+ *   - 節點的拖曳移動與選取值測
+ *   - 插件實例化、移除、序列化/反序列化
  */
 
 #include "GraphComponent.h"
@@ -16,18 +17,23 @@
 
 // ─── Palette ─────────────────────────────────────────────────
 
+// ─── 色彩資料表 ────────────────────────────────
 namespace NP
 {
-    const juce::Colour canvas     { 0xFFECECEC };
-    const juce::Colour grid       { 0xFFD8D8D8 };
-    const juce::Colour zoneBg     { 0xFFDFDFDF };
-    const juce::Colour zoneBorder { 0xFFBBBBBB };
-    const juce::Colour zoneHeader { 0xFFD0D0D0 };
-    const juce::Colour zoneTitle  { 0xFF333333 };
+    const juce::Colour canvas     { 0xFFECECEC }; ///< 畫布背景色（淺灰色）
+    const juce::Colour grid       { 0xFFD8D8D8 }; ///< 小點陣列色
+    const juce::Colour zoneBg     { 0xFFDFDFDF }; ///< Zone 區域填充色
+    const juce::Colour zoneBorder { 0xFFBBBBBB }; ///< Zone 分隔線色
+    const juce::Colour zoneHeader { 0xFFD0D0D0 }; ///< Zone 標題列背景色
+    const juce::Colour zoneTitle  { 0xFF333333 }; ///< Zone 標題文字色
 }
 
-// ─── Plugin parameter listener (auto-save on tweak) ─────────
-
+// ─── 插件參數監聽器（調強時自動儲存） ─────────────────────
+/**
+ * PluginParameterListener
+ * 實作 AudioProcessorListener，當任一插件參數變化時觸發回調。
+ * 用於十採集參數調強後自動儲存，回調通常就是 onGraphChanged()。
+ */
 class PluginParameterListener : public juce::AudioProcessorListener
 {
 public:
@@ -47,7 +53,8 @@ private:
 static std::map<juce::uint32, std::unique_ptr<PluginParameterListener>> g_pluginListeners;
 
 // ═══════════════════════════════════════════════════════════════
-// Constructor
+// 建構實作
+// 將 dm/kpl/fmt/g 儙存參照，設定不透明背景與鍵監聴。
 // ═══════════════════════════════════════════════════════════════
 
 GraphComponent::GraphComponent (juce::AudioDeviceManager& dm,
@@ -61,7 +68,10 @@ GraphComponent::GraphComponent (juce::AudioDeviceManager& dm,
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Geometry helpers
+// 幾何計算輔助函式
+// zoneAt: 判斷點屬於哪個 Zone（Left/Center/Right）
+// inputPortPos / outputPortPos: 對 I/O 或插件節點計算端口座標
+// nodeBounds: 回傳節點邊界矩形（DPI 尺度已包含）
 // ═══════════════════════════════════════════════════════════════
 
 GraphComponent::Zone GraphComponent::zoneAt (juce::Point<int> p) const
@@ -106,7 +116,8 @@ juce::Rectangle<int> GraphComponent::nodeBounds (const PluginNode& n) const
 }
 
 // ═══════════════════════════════════════════════════════════════
-// addNode
+// 新增節點
+// Input/Output 節點使用固定 UID；插件節點在 showPluginPicker 建立後才改寫 graphNodeId。
 // ═══════════════════════════════════════════════════════════════
 
 void GraphComponent::addNode (const juce::String& name, NodeType type)
@@ -138,7 +149,8 @@ void GraphComponent::addNode (const juce::String& name, NodeType type)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AudioProcessorGraph helpers
+// AudioProcessorGraph 連線管理
+// add/remove/clearInput/disconnect 繱潜調用效果圖 API，結束後調用 graph.rebuild()。
 // ═══════════════════════════════════════════════════════════════
 
 void GraphComponent::addGraphConnection (const PluginNode& from, const PluginNode& to)
@@ -198,7 +210,8 @@ void GraphComponent::disconnectNode (int nodeId)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Drawing
+// 繪製區域背景
+// 繪製左/右 I/O Zone 的填充色、邊框線、標題列和「雙擊新增」提示文字。
 // ═══════════════════════════════════════════════════════════════
 
 void GraphComponent::drawZoneBackgrounds (juce::Graphics& g) const
@@ -231,7 +244,7 @@ void GraphComponent::drawZoneBackgrounds (juce::Graphics& g) const
     drawHeader (0,              LanguageManager::getInstance().getText ("inputPorts"));
     drawHeader (w - getZoneWidth(), LanguageManager::getInstance().getText ("outputPorts"));
 
-    // Hints
+    // 提示文字：若尚未建立任何 I/O 節點，在對應 Zone 顯示「雙擊新增」一行提示
     bool hasIn = false, hasOut = false;
     for (const auto& nd : nodes)
     {
@@ -249,7 +262,7 @@ void GraphComponent::paint (juce::Graphics& g)
 {
     g.fillAll (NP::canvas);
 
-    // Grid dots
+    // 繪製中央區域的小點陣列（每 32px 一點）
     g.setColour (NP::grid);
     for (int x = getZoneWidth(); x < getWidth() - getZoneWidth(); x += 32)
         for (int y = 0; y < getHeight(); y += 32)
@@ -257,7 +270,7 @@ void GraphComponent::paint (juce::Graphics& g)
 
     drawZoneBackgrounds (g);
 
-    // Wires
+    // 繪製所有已建立的連線（尋找連線的輸入/輸出座標，由 WireDraw 繪製 Bezier）
     for (const auto& wire : wires)
     {
         const PluginNode *fr = nullptr, *to = nullptr;
@@ -270,7 +283,7 @@ void GraphComponent::paint (juce::Graphics& g)
             WireDraw::drawWire (g, outputPortPos (*fr), inputPortPos (*to), false);
     }
 
-    // Drag wire
+    // 拖曳中的臨時連線：進行中顯示從尾往游標的轉接連線预覽
     if (draggingWire && wireFrom >= 0)
     {
         for (const auto& nd : nodes)
@@ -294,7 +307,7 @@ void GraphComponent::paint (juce::Graphics& g)
         }
     }
 
-    // Nodes
+    // 繪製所有節點：I/O 側节點用 drawSideNode，插件區節點用 drawPluginNode
     for (const auto& nd : nodes)
     {
         if (nd.type == NodeType::Input || nd.type == NodeType::Output)
@@ -308,7 +321,7 @@ void GraphComponent::paint (juce::Graphics& g)
         }
     }
 
-    // Empty centre hint
+    // 中央區空白提示文字：若尚無插件節點，顯示「雙擊新增插件」提示
     bool hasPlugin = false;
     for (const auto& nd : nodes) if (nd.type == NodeType::Plugin) { hasPlugin = true; break; }
     if (! hasPlugin)
@@ -322,7 +335,10 @@ void GraphComponent::paint (juce::Graphics& g)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Hit testing
+// 命中測試（Hit testing）
+// nodeAtPoint: 從後往前遍歷節點列表，找到包含給定點的節點。
+// nearOutputPort / nearInputPort: 判斷游標是否靠近端口（吸附半徑為 PortRadius+6）。
+// isValidWire: 防止自接、重複連線、Input→Input 或 Output→Output 等非法連接。
 // ═══════════════════════════════════════════════════════════════
 
 int GraphComponent::nodeAtPoint (juce::Point<int> p) const
@@ -367,7 +383,11 @@ bool GraphComponent::isValidWire (int fromId, int toId) const
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Mouse events
+// 滑鼠事件處理
+// mouseDoubleClick: 雙擊插件節點開啟編輯器；雙擊 I/O Zone 觸發 onEditNode 回調。
+// mouseDown: 决定選取、連線拖曳或節點拖曳起始模式。
+// mouseDrag: 更新連線尾端座標或節點位置（圭限在中央 Zone 內）。
+// mouseUp: 尝試建立連線，清除拖曳狀態。
 // ═══════════════════════════════════════════════════════════════
 
 void GraphComponent::mouseDoubleClick (const juce::MouseEvent& e)
@@ -469,7 +489,7 @@ void GraphComponent::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Wire dragging from output port?
+    // 從輸出端口開始拖曳連線
     int portNode = -1;
     if (nearOutputPort (e.getPosition(), portNode))
     {
@@ -480,6 +500,7 @@ void GraphComponent::mouseDown (const juce::MouseEvent& e)
         draggingNode      = -1;
         return;
     }
+    // 從輸入端口開始拖曳連線
     if (nearInputPort (e.getPosition(), portNode))
     {
         draggingWire      = true;
@@ -577,7 +598,9 @@ void GraphComponent::mouseUp (const juce::MouseEvent& e)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Plugin picker
+// 插件選取彈出選單
+// 列舉 KnownPluginList 中所有 VST3 插件，由使用者選取後實例化带入效果圖。
+// 最後一項為「管理插件」，觸發 onManagePlugins 回調。
 // ═══════════════════════════════════════════════════════════════
 
 void GraphComponent::showPluginPicker (juce::Point<int> canvasPos)
@@ -628,7 +651,7 @@ void GraphComponent::showPluginPicker (juce::Point<int> canvasPos)
             auto nodePtr = graph.addNode (std::unique_ptr<juce::AudioProcessor> (std::move (instance)));
             if (! nodePtr) return;
 
-            // Attach parameter listener for auto-save
+            // 插件實例建立成功後，附加參數監聽器並加入 g_pluginListeners 映射
             if (auto* proc = nodePtr->getProcessor())
             {
                 auto listener = std::make_unique<PluginParameterListener> (
@@ -655,7 +678,8 @@ void GraphComponent::showPluginPicker (juce::Point<int> canvasPos)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Plugin editor
+// 插件編輯器視窗
+// 找到節點後委托 PluginWindow::getWindowFor 開啟編輯器視窗。
 // ═══════════════════════════════════════════════════════════════
 
 void GraphComponent::openPluginEditor (int nodeId)
@@ -672,7 +696,8 @@ void GraphComponent::openPluginEditor (int nodeId)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Remove node
+// 移除節點
+// 清除參數監聽器，從 JUCE 效果圖清除節點，那從 nodes 和 wires 列表則移除對應筆錄。
 // ═══════════════════════════════════════════════════════════════
 
 void GraphComponent::removeNode (int nodeId)
@@ -705,7 +730,8 @@ void GraphComponent::removeNode (int nodeId)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Keyboard
+// 鍵盤事件
+// Delete/Backspace 鍵刪除目前選取的節點。
 // ═══════════════════════════════════════════════════════════════
 
 bool GraphComponent::keyPressed (const juce::KeyPress& key)
@@ -719,7 +745,9 @@ bool GraphComponent::keyPressed (const juce::KeyPress& key)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Serialisation
+// 序列化 / 反序列化
+// saveState(): 將所有節點和連線輸出為 XML，插件狀態以 Base64 嵌入。
+// loadState(): 輸入 XML 後重建圖狀態，自動實例化插件并還原連線。
 // ═══════════════════════════════════════════════════════════════
 
 std::unique_ptr<juce::XmlElement> GraphComponent::saveState() const

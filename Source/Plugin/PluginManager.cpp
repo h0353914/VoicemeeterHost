@@ -1,12 +1,18 @@
 /*
  * PluginManager.cpp
- * VoicemeeterHost — VST Plugin Scanning, Loading, and State Management
+ * VoicemeeterHost — VST 插件掃描、載入與狀態管理實作
+ *
+ * 主要逻輯：
+ *   - PluginListWindow  內臣類別：封裝 JUCE PluginListComponent 的掃描視窗。
+ *   - PluginManager     主類別：負責初始化格式、恢復清單、寫入狀態。
  */
 
 #include "PluginManager.h"
 #include "../Localization/LanguageManager.h"
 
-// ─── PluginListWindow ────────────────────────────────────────
+// ─── PluginListWindow 内臣類別 ────────────────────────────────────────
+// 封裝 JUCE 的 PluginListComponent，提供插件掃描與管理介面，
+// 關閉時自動移除不符合通道要求的插件。
 
 class PluginManager::PluginListWindow : public juce::DocumentWindow
 {
@@ -52,8 +58,9 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginListWindow)
 };
 
-// ─── PluginManager ───────────────────────────────────────────
+// ─── PluginManager 主類別 ───────────────────────────────────────────
 
+// 建構元代碼：依段譯設定新增提供的格式，讀入已儲存的插件清單。
 PluginManager::PluginManager()
 {
 #if JUCE_PLUGINHOST_VST3
@@ -117,6 +124,8 @@ void PluginManager::savePluginStatesFromGraph (juce::AudioProcessorGraph& graph)
     getAppProperties().saveIfNeeded();
 }
 
+// changeListenerCallback：當 KnownPluginList 變化時（新增/移除插件），
+// 將最新清單以 XML 形式寫入使用者設定檔並即時儲存。
 void PluginManager::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
     if (source == &knownPluginList)
@@ -129,6 +138,8 @@ void PluginManager::changeListenerCallback (juce::ChangeBroadcaster* source)
     }
 }
 
+// 產生插件韩鍵字串：把嘗試類型、插件名稱、版本、格式字串合並。
+// 用於寫入設定檔中的插件狀態鍵名。
 juce::String PluginManager::getKey (const juce::String& type,
                                      const juce::PluginDescription& plugin)
 {

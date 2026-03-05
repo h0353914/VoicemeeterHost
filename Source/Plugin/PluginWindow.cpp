@@ -1,13 +1,17 @@
 /*
  * PluginWindow.cpp
- * VoicemeeterHost — VST Plugin Editor Window
+ * VoicemeeterHost — VST 插件編輯器視窗實作
  *
- * Replaced deprecated runDispatchLoopUntil with async close.
- * Uses LookAndFeel_V4 colours.
+ * 實作細節：
+ *   - 建構時由 Node::properties 恢復上次位置
+ *   - 銷毀時從 activePluginWindows 清單移除自身
+ *   - 提供靜態函式：關閉狀態訊詢與工廠方法
+ *   - ProgramAudioProcessorEditor：若插件選擇程式模式，使用屬性面板顯示程式清單
  */
 
 #include "PluginWindow.h"
 
+// 全域已開啟視窗清單（靜態變數於此編譯單元內）
 static juce::Array<PluginWindow*> activePluginWindows;
 
 // ─── Construction / destruction ──────────────────────────────
@@ -38,8 +42,8 @@ PluginWindow::~PluginWindow()
     clearContentComponent();
 }
 
-// ─── Static helpers ──────────────────────────────────────────
-
+// ─── 靜態輔助方法 ──────────────────────────────────────────────
+// 關閉指定節點的所有視窗，對全域清單倒序遍訪避免索引錄序問題。
 void PluginWindow::closeCurrentlyOpenWindowsFor (juce::uint32 nodeUid)
 {
     for (int i = activePluginWindows.size(); --i >= 0;)
@@ -97,7 +101,7 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProgramAudioProcessorEditor)
 };
 
-// ─── Factory ─────────────────────────────────────────────────
+// ─── 工廠方法：根據節點與類型尋找或新建編輯器視窗 ──────────────
 
 PluginWindow* PluginWindow::getWindowFor (juce::AudioProcessorGraph::Node* node,
                                            WindowFormatType type)
@@ -135,14 +139,15 @@ PluginWindow* PluginWindow::getWindowFor (juce::AudioProcessorGraph::Node* node,
     return nullptr;
 }
 
-// ─── Events ──────────────────────────────────────────────────
-
+// ─── 事件處理 ──────────────────────────────────────────────────
+// 移動時寫入位置屬性，下次開啟時將從屬性恢復。
 void PluginWindow::moved()
 {
     owner->properties.set (getLastXProp (type), getX());
     owner->properties.set (getLastYProp (type), getY());
 }
 
+// 關閉按鈕時：清除屬性記錄並 delete 視窗自身。
 void PluginWindow::closeButtonPressed()
 {
     owner->properties.set (getOpenProp (type), false);

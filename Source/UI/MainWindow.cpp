@@ -1,19 +1,35 @@
 /*
  * MainWindow.cpp
- * VoicemeeterHost — Main Application Window Implementation
+ * VoicemeeterHost — 主視窗實作
  *
- * Contains ScaleSettingsContentComponent, ScaleSettingsWindow,
- * MainWindowContent, and MainWindow.
+ * 本檔包含四個類別：
+ *
+ * 1. ScaleSettingsContentComponent
+ *    UI 縮放設定對話方塊內容：標籤 + 下拉選單 + OK 按鈕。
+ *    選擇變化時即時調用 ScaleSettingsManager，並通知視窗重算尺度。
+ *
+ * 2. ScaleSettingsWindow
+ *    ResizableWindow 子類，包裝 ScaleSettingsContentComponent。
+ *    以 10Hz Timer 偵測字型縮放變化並自動調整視窗大小。
+ *
+ * 3. MainWindowContent
+ *    頂層元件，包含 GraphComponent 與設定按鈕。
+ *    刽方按鈕引發裝置選擇對話，雙擊圖形區域新增輸入/輸出節點。
+ *
+ * 4. MainWindow
+ *    DocumentWindow 的視窗容器。
  */
 
 #include "MainWindow.h"
 #include "../Plugin/PluginWindow.h"
 #include "../Localization/LanguageManager.h"
 
+// 全域存取函式宣告：由 Main.cpp 實作。
 juce::ApplicationProperties &getAppProperties(); // defined in Main.cpp
 
 // ═══════════════════════════════════════════════════════════════
-// ScaleSettingsContentComponent
+// ScaleSettingsContentComponent 實作
+// 提供 100%/125%/150%/200% 四個選項，選擇時即時更新全域縮放。
 // ═══════════════════════════════════════════════════════════════
 
 class ScaleSettingsContentComponent : public juce::Component

@@ -1,10 +1,12 @@
 /*
  * SystemTrayMenu.cpp
- * VoicemeeterHost — System Tray Icon Implementation
+ * VoicemeeterHost — 系統匣圖示實作
  *
- * Owns the core audio chain, creates the graph I/O nodes,
- * loads/saves state, and manages the tray right-click menu
- * (edit plugins, language, invert icon, quit).
+ * 核心逻輯：
+ *   - 建構時載入語言、音訊設備狀態、建立 I/O 节點，還原圖形狀態。
+ *   - 密圃鼠標右鍵： 50ms 延遲很出右鍵選單。
+ *   - 雙擊建立 / 前置主視窗。
+ *   - 選單項目：編輯插件、語言切換、離開。
  */
 
 #include "SystemTrayMenu.h"
@@ -21,29 +23,32 @@ juce::ApplicationProperties &getAppProperties();
 
 // ─── Constants ───────────────────────────────────────────────
 
+// 內郠常數：語言選單項首準 ID
+// 使用廣大的數字剖長適變進厅與其他內嵌選單項衝突。
 namespace
 {
     constexpr int languageMenuItemBase = 2000000000;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Constructor / Destructor
+// 建構 / 銷毀實作
+// 建構時從設定檔讀入語言、音訊裝置狀態，建立圖 I/O 節點，還原圖形狀態。
 // ═══════════════════════════════════════════════════════════════
 
 SystemTrayMenu::SystemTrayMenu()
 {
-    // Language
+    // 讀取上次儲存的語言設定，預設為英文
     juce::String savedLang = getAppProperties().getUserSettings()->getValue("language", "English");
     LanguageManager::getInstance().setLanguageById(savedLang);
 
-    // Audio device
+    // 讀取上次儲存的音訊設備狀態（若無則使用預設設備）
     std::unique_ptr<juce::XmlElement> savedAudio(
         getAppProperties().getUserSettings()->getXmlValue("audioDeviceState"));
     deviceManager.initialise(256, 256, savedAudio.get(), true);
     player.setProcessor(&graph);
     deviceManager.addAudioCallback(&player);
 
-    // Main content
+    // 建立主視窗內容元件，將設備管理器、插件清單、效果圖注入
     mainContent = std::make_unique<MainWindowContent>(
         deviceManager,
         pluginManager.getKnownPluginList(),
@@ -76,10 +81,10 @@ SystemTrayMenu::SystemTrayMenu()
         }
     };
 
-    // Graph I/O nodes
+    // 在效果圖中建立輸入/輸出 I/O 節點
     loadActivePlugins();
 
-    // Restore saved graph state
+    // 還原上次儲存的節點圖狀態（連線、位置等）
     std::unique_ptr<juce::XmlElement> savedGraph(
         getAppProperties().getUserSettings()->getXmlValue("nodeGraphState"));
     if (savedGraph != nullptr)
@@ -87,7 +92,7 @@ SystemTrayMenu::SystemTrayMenu()
 
     mainContent->onGraphChanged();
 
-    // Tray icon
+    // 設定工作列匣圖示并更新提示字號
     setTrayIcon();
     setIconTooltip(LanguageManager::getInstance().getText("appName"));
 }
@@ -100,7 +105,9 @@ SystemTrayMenu::~SystemTrayMenu()
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Tray icon
+// 工作列匣圖示設定
+// 讀取 BinaryData 中嵌入的 PNG 圖片，設定工作列匣圖示。
+// 目前一律使用黑色圖示（適合亮色工作列即背景）。
 // ═══════════════════════════════════════════════════════════════
 
 void SystemTrayMenu::setTrayIcon()
@@ -112,7 +119,9 @@ void SystemTrayMenu::setTrayIcon()
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Graph I/O setup
+// 音訊效果圖 I/O 節點設定
+// loadActivePlugins(): 建立 ID=1000000 的 audioInputNode 與 ID=1000001 的 audioOutputNode。
+// savePluginStates(): 將非 I/O 節點的插件狀態保存到 APP 設定檔。
 // ═══════════════════════════════════════════════════════════════
 
 void SystemTrayMenu::loadActivePlugins()
@@ -158,7 +167,8 @@ void SystemTrayMenu::savePluginStates()
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ChangeListener
+// ChangeListener 實作
+// 目前釋放處理會影響主內容元件中的節點圖視覺化；未來可擴展自動儲存。
 // ═══════════════════════════════════════════════════════════════
 
 void SystemTrayMenu::changeListenerCallback(juce::ChangeBroadcaster *source)
@@ -167,7 +177,9 @@ void SystemTrayMenu::changeListenerCallback(juce::ChangeBroadcaster *source)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Tray mouse events
+// 匣圖示鼠標事件處理
+// mouseDown 右鍵: 啟動 50ms 計時器後呈現即岈選單。
+// mouseDoubleClick: 雙擊匠匣圖示开啟主視窗（若已開則置前）。
 // ═══════════════════════════════════════════════════════════════
 
 void SystemTrayMenu::mouseDown(const juce::MouseEvent &e)
@@ -194,7 +206,8 @@ void SystemTrayMenu::mouseDoubleClick(const juce::MouseEvent &)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Timer → right-click menu
+// 計時器回調 → 建立右鍵即岈選單
+// 屈展岈利：標題組（app 名稱）、編輯插件選項、語言子選單、離開選項。
 // ═══════════════════════════════════════════════════════════════
 
 void SystemTrayMenu::timerCallback()
@@ -207,7 +220,7 @@ void SystemTrayMenu::timerCallback()
     menu.addSectionHeader(lang.getText("appName"));
     menu.addItem(2, lang.getText("editPlugins"));
 
-    // Language sub-menu
+    // 語言子選單：列舉所有可用語言，目前使用中的語言所對應項目會勾選
     juce::PopupMenu langMenu;
     int langId = languageMenuItemBase;
     for (const auto &l : lang.getAvailableLanguages())
@@ -229,19 +242,19 @@ void SystemTrayMenu::timerCallback()
 
 void SystemTrayMenu::menuInvocationCallback(int id, SystemTrayMenu *im)
 {
-    if (id == 1) // Quit
+    if (id == 1) // 離開：儲存插件狀態後退出應用程式
     {
         im->savePluginStates();
         juce::JUCEApplication::getInstance()->quit();
         return;
     }
-    if (id == 2) // Edit Plugins
+    if (id == 2) // 編輯插件：開啟插件清單管理視窗
     {
         im->reloadPlugins();
         return;
     }
 
-    if (id >= languageMenuItemBase)
+    if (id >= languageMenuItemBase) // 語言切換：更新語言并重新展示選單
     {
         auto langs = LanguageManager::getInstance().getAvailableLanguages();
         int idx = id - languageMenuItemBase;
@@ -256,7 +269,8 @@ void SystemTrayMenu::menuInvocationCallback(int id, SystemTrayMenu *im)
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Plugin list window
+// 插件清單視窗管理
+// reloadPlugins(): 委托 PluginManager 開啟插件清單視窗，不需要背景工作线程。
 // ═══════════════════════════════════════════════════════════════
 
 void SystemTrayMenu::reloadPlugins()
