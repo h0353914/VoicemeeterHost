@@ -1,0 +1,9 @@
+[submodule "submodule/imgui"]
+	path = submodule/imgui
+	url = https://github.com/ocornut/imgui
+[submodule "submodule/imgui-node-editor"]
+	path = submodule/imgui-node-editor
+	url = https://github.com/thedmd/imgui-node-editor
+[submodule "submodule/JUCE"]
+	path = submodule/JUCE
+	url = https://github.com/juce-framework/JUCE
